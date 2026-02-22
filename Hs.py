@@ -9,14 +9,13 @@ genai.configure(api_key=GOOGLE_API_KEY, transport='rest')
 
 def load_resources():
     try:
-        # تأكد من مسار الملف عندك
         df = pd.read_excel('customs_global_brain (6) (1).xlsx')
         df['band_clean'] = df['band_syria'].astype(str).str.replace(r'[^\d]', '', regex=True).str.strip().str.zfill(8)
         df['material_clean'] = df['material_clean'].astype(str).str.strip()
         print("✅ قاعدة البيانات جاهزة")
         return df
     except Exception as e:
-        print(f"❌ خطأ في تحميل الملف: {e}")
+        print(f"❌ خطأ: {e}")
         return None
 
 df_main = load_resources()
@@ -28,28 +27,19 @@ def get_customs_consultation(user_input):
     try:
         model = genai.GenerativeModel('gemini-2.0-flash')
         
-        # 1. تحديد اللغة بدقة
-        lang_lock_resp = model.generate_content(f"Identify the language or dialect of this text: '{user_input}'. Return ONLY the name of the language in English (e.g., French, Syrian Arabic, German).")
-        lang_lock = lang_lock_resp.text.strip()
+        # 1. تحديد اللغة بدقة قبل أي شيء (خطوة قفل اللغة)
+        lang_lock = model.generate_content(f"Identify the language or dialect of this text: '{user_input}'. Return ONLY the name of the language in English (e.g., French, Syrian Arabic, German).").text.strip()
 
-        # 2. تحليل الصنف (تعديل عيسى للباذنجان الأسود)
+        # 2. تحليل الصنف (النتائج فقط)
         prompt = (
-            f"Context Instruction for '{user_input}': "
-            f"If the word is 'بانجان' or 'باذنجان', it MUST be classified as 'Black Eggplant' (خضروات - باذنجان أسود). "
-            f"NEVER confuse it with 'Tomato' (بادنجان رومی). "
             f"Analyze the item: '{user_input}'. Provide the top 3 relevant HS6 codes for PHYSICAL PRODUCTS. "
             f"CRITICAL: You must respond ONLY in {lang_lock}. "
             f"Format strictly: [Item Category]: [HS6 Code]"
         )
-        
         response = model.generate_content(prompt)
-        # التأكد من وجود نص في الاستجابة وتقسيمه لأسطر
-        if response and response.text:
-            raw_lines = [line for line in response.text.strip().split('\n') if ':' in line]
-        else:
-            return "⚠️ لم يتم استلام نتائج من الذكاء الاصطناعي."
+        raw_lines = [line for line in response.text.strip().split('\n') if ':' in line]
 
-        # 3. ترجمة العناوين
+        # 3. ترجمة العناوين للغة المقفولة
         label_prompt = (
             f"Translate these 4 labels to {lang_lock}: "
             f"'Item Name', 'HS6 Code', '8-Digit Code', 'Simplified Description'. "
@@ -63,7 +53,6 @@ def get_customs_consultation(user_input):
         processed_codes = set()
 
         for line in raw_lines:
-            if ':' not in line: continue
             item_desc_ai, hs_code_raw = line.rsplit(':', 1)
             hs6_match = re.search(r'(\d{4,6})', hs_code_raw)
             
@@ -78,20 +67,20 @@ def get_customs_consultation(user_input):
 
                 if not matches.empty:
                     found_any = True
-                    row = matches.iloc[0] 
+                    row = matches.iloc[0] # نأخذ أول مطابقة
                     
-                    # 4. وصف المنتج
+                    # 4. توليد وصف ذكي باللغة المقفولة حصراً
                     desc_prompt = (
                         f"Describe this product: '{row['material_clean']}' using ONLY {lang_lock}. "
-                        f"Context: The user asked about '{user_input}'. Mention it is the black vegetable (eggplant) if applicable. "
+                        f"Context: The user is asking about '{user_input}'. "
                         f"Keep it short (1-2 sentences). Return ONLY the description."
                     )
                     translated_desc = model.generate_content(desc_prompt).text.strip()
 
-                    final_output += f" {l[0]}: {item_desc_ai.strip()}\n"
-                    final_output += f" {l[1]}: {hs6}\n"
+                    final_output += f"🔸 {l[0]}: {item_desc_ai.strip()}\n"
+                    final_output += f"🌐 {l[1]}: {hs6}\n"
                     final_output += f"🇸🇾 {l[2]}: {row['band_clean']}\n"
-                    final_output += f" {l[3]}: {translated_desc}\n"
+                    final_output += f"📝 {l[3]}: {translated_desc}\n"
                     final_output += "────────────────\n"
 
         if not found_any:
@@ -104,9 +93,9 @@ def get_customs_consultation(user_input):
         return f"⚠️ Error: {str(e)}"
 
 def main():
-    print(" نظام التعرفة الجمركية Across Mena ")
+    print("🚀 محرك Across Mena (نظام المرآة اللغوية)")
     while True:
-        query = input("\n  الصنف : ").strip()
+        query = input("\n🔎 الصنف (عيسى): ").strip()
         if query.lower() in ['exit', 'خروج', 'quit']: break
         if query: print(get_customs_consultation(query))
 
