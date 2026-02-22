@@ -7,7 +7,10 @@ import streamlit as st
 # --- 1. الإعدادات ---
 st.set_page_config(page_title="Across Mena - HS Code System", page_icon="🇸🇾", layout="centered")
 
-GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "AIzaSyAdjvA26WA4uujcuAcOa7sPo8A75LEvZtA").strip()
+GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "").strip()
+if not GOOGLE_API_KEY:
+    st.error("⚠️ مفتاح API غير موجود. يرجى إضافة GOOGLE_API_KEY في إعدادات Secrets.")
+    st.stop()
 genai.configure(api_key=GOOGLE_API_KEY, transport='rest')
 
 @st.cache_data
