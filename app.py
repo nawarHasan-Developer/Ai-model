@@ -23,7 +23,7 @@ genai.configure(api_key=GOOGLE_API_KEY, transport='rest')
 @st.cache_data
 def load_resources():
     try:
-        df = pd.read_excel('customs_global_brain (6) (1).xlsx')
+        df = pd.read_excel('customs_global_brain.xlsx')
         df['band_clean'] = df['band_syria'].astype(str).str.replace(r'[^\d]', '', regex=True).str.strip().str.zfill(8)
         df['material_clean'] = df['material_clean'].astype(str).str.strip()
         return df

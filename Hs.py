@@ -17,7 +17,7 @@ else:
 def load_resources():
     try:
         # يفضل دائماً يكون الملف بنفس المجلد على السيرفر
-        df = pd.read_excel('customs_global_brain (6) (1).xlsx')
+        df = pd.read_excel('customs_global_brain.xlsx')
         df['band_clean'] = df['band_syria'].astype(str).str.replace(r'[^\d]', '', regex=True).str.strip().str.zfill(8)
         df['material_clean'] = df['material_clean'].astype(str).strip()
         return df
