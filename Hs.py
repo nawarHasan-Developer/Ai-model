@@ -2,75 +2,101 @@
 import pandas as pd
 import google.generativeai as genai
 import re
-import os # هي أهم مكتبة مشان يشتغل على السيرفر
+import os
 
-# --- 1. الإعدادات (نظام السيرفر) ---
-# الكود بيسحب المفتاح من بيئة السيرفر أوتوماتيكياً
+# --- 1. الإعدادات ---
 API_KEY = os.getenv("GOOGLE_API_KEY")
-
-if API_KEY:
-    genai.configure(api_key=API_KEY.strip(), transport='rest')
-else:
-    # هي الرسالة بتساعد المبرمج يعرف إذا نسي يضيف المفتاح بالسيرفر
-    raise ValueError("GOOGLE_API_KEY not found in environment variables!")
+genai.configure(api_key=API_KEY.strip(), transport='rest')
 
 def load_resources():
     try:
-        # يفضل دائماً يكون الملف بنفس المجلد على السيرفر
         df = pd.read_excel('customs_global_brain.xlsx')
         df['band_clean'] = df['band_syria'].astype(str).str.replace(r'[^\d]', '', regex=True).str.strip().str.zfill(8)
-        df['material_clean'] = df['material_clean'].astype(str).strip()
+        df['material_clean'] = df['material_clean'].astype(str).str.strip()
         return df
     except Exception as e:
-        print(f"❌ Error loading Excel: {e}")
+        print(f"❌ خطأ في تحميل الملف: {e}")
         return None
 
 df_main = load_resources()
 
 def get_customs_consultation(user_input):
     if df_main is None: return "⚠️ Database Error."
+
     try:
         model = genai.GenerativeModel('gemini-2.0-flash')
         
-        # تحديد اللغة
-        lang_resp = model.generate_content(f"Identify language for: '{user_input}'. Return ONLY language name.")
-        lang = lang_resp.text.strip()
+        # 1. كشف لغة الإدخال
+        is_arabic = bool(re.search(r'[\u0600-\u06FF]', user_input))
+        
+        if is_arabic:
+            target_lang = "Arabic"
+            L = {'item': "الصنف", 'hs6': "البند السداسي", 'sy_band': "البند السوري", 'desc': "الوصف", 'rep': "التقرير الجمركي"}
+        else:
+            # كشف اللغة للأجانب (ألماني، إنجليزي...)
+            detect_lang_prompt = f"What is the language of: '{user_input}'? Return only the language name."
+            target_lang = model.generate_content(detect_lang_prompt).text.strip()
+            L = {'item': "Category", 'hs6': "HS6 Code", 'sy_band': "Syrian Code", 'desc': "Description", 'rep': "Customs Report"}
+            # تحديث العناوين للغة الهدف (بدون CSV)
+            translate_labels = model.generate_content(f"Translate these words to {target_lang} individually: Item, HS6 Code, Syrian Code, Description, Customs Report. Return 5 lines.").text.strip().split('\n')
+            if len(translate_labels) >= 5:
+                L = {'item': translate_labels[0].strip(), 'hs6': translate_labels[1].strip(), 'sy_band': translate_labels[2].strip(), 'desc': translate_labels[3].strip(), 'rep': translate_labels[4].strip()}
 
-        # البرومت المعدل (القواعد السورية: باذنجان، علكة، بطاطا)
+        # 2. برومبت "خبير الجمارك" الصارم
         prompt = (
-            f"Rules: 1. 'علكة' = Chewing Gum (HS 170410). 2. 'بانجان'/'باذنجان' = Black Eggplant. "
-            f"3. 'بطاطا' = Potatoes. Analyze: '{user_input}'. "
-            f"Respond ONLY in {lang}. Provide top 3 HS6 codes. Format: [Category]: [HS6 Code]"
+            f"You are a Syrian Customs Consultant. Item: '{user_input}'.\n"
+            f"1. Identify 3-5 logical HS6 codes.\n"
+            f"2. Your entire response must be in {target_lang}. \n"
+            f"3. FORMAT: [Category Name]: [HS6 Code]. One per line. No intros."
         )
         
         response = model.generate_content(prompt)
-        if not response or not response.text: return "⚠️ AI Error."
-        
         raw_lines = [line for line in response.text.strip().split('\n') if ':' in line]
         
-        # ترجمة العناوين
-        labels = model.generate_content(f"Translate to {lang}: 'Item Name','HS6','8-Digit','Description'. Return CSV only.").text.strip().split(',')
-        l = [i.strip() for i in labels] if len(labels) >= 4 else ["Item", "HS6", "8-Digit", "Desc"]
+        final_output = ""
+        processed_hs6 = set()
 
-        output = ""
         for line in raw_lines:
-            # معالجة الكود والمطابقة مع الإكسل
-            item_ai, hs_raw = line.rsplit(':', 1)
-            hs6 = re.search(r'(\d{4,6})', hs_raw).group(1)[:6]
-            matches = df_main[df_main['band_clean'].str.startswith(hs6)]
+            parts = line.rsplit(':', 1)
+            item_detail = parts[0].strip()
+            hs_match = re.search(r'(\d{4,6})', parts[1])
             
-            if not matches.empty:
-                row = matches.iloc[0]
-                # وصف ذكي ومباشر
-                desc = model.generate_content(f"Describe '{row['material_clean']}' for query '{user_input}' in {lang}. 1 direct sentence.").text.strip()
-                output += f"🔸 {l[0]}: {item_ai}\n🌐 {l[1]}: {hs6}\n🇸🇾 {l[2]}: {row['band_clean']}\n📝 {l[3]}: {desc}\n────────────────\n"
+            if hs_match:
+                hs6 = hs_match.group(1)[:6]
+                if hs6 in processed_hs6: continue
+                processed_hs6.add(hs6)
 
-        return output if output else "❌ No matches found."
+                matches = df_main[df_main['band_clean'].str.startswith(hs6)]
+                if matches.empty:
+                    matches = df_main[df_main['band_clean'].str.startswith(hs6[:4])]
+
+                if not matches.empty:
+                    row = matches.iloc[0]
+                    
+                    # 3. معالجة الوصف (إذا عربي وعربي ما في داعي للترجمة، إذا ألماني منترجم)
+                    if is_arabic:
+                        desc_clean = row['material_clean']
+                        # تلخيص الوصف العربي بذكاء
+                        desc_clean = model.generate_content(f"لخص هذا الوصف الجمركي بجملة واحدة مفيدة: {desc_clean}").text.strip()
+                    else:
+                        desc_prompt = f"Translate and summarize this Arabic text into ONE short sentence in {target_lang}: '{row['material_clean']}'. Absolutely NO Arabic characters."
+                        desc_clean = model.generate_content(desc_prompt).text.strip().replace('*', '')
+
+                    final_output += f"🔸 {L['item']}: {item_detail}\n"
+                    final_output += f"🌐 {L['hs6']}: {hs6}\n"
+                    final_output += f"🇸🇾 {L['sy_band']}: {row['band_clean']}\n"
+                    final_output += f"📝 {L['desc']}: {desc_clean}\n"
+                    final_output += "────────────────\n"
+
+        if not final_output: return f"❌ No results for '{user_input}'."
+        return f"\n======= 📋 {L['rep']} =======\n🔎 {user_input}\n────────────────\n{final_output}===================================="
+
     except Exception as e:
         return f"⚠️ System Error: {str(e)}"
 
-# تشغيل يدوي للتجربة (أو استدعاء من قبل السيرفر)
 if __name__ == "__main__":
-    print("🚀 Across Mena Engine Running...")
-    q = input("🔎 الصنف (عيسى): ")
-    print(get_customs_consultation(q))
+    print("🚀 محرك Across Mena v34 - نسخة الاستقرار الكامل.")
+    while True:
+        query = input("\n🔎 الصنف (عيسى): ").strip()
+        if query.lower() in ['exit', 'خروج']: break
+        if query: print(get_customs_consultation(query))
