@@ -110,7 +110,7 @@ def get_customs_consultation(user_input):
         return f"⚠️ Error: {str(e)}", None
 
 # --- UI ---
-st.title("🇸🇾 نظام التعرفة الجمركية Across Mena")
+st.title("🇸🇾 نظام التعرفة الجمركية Acrossss Mena")
 st.markdown("---")
 
 query = st.text_input("أدخل اسم الصنف (مثلاً: باذنجان، طماطم، حديد):")
